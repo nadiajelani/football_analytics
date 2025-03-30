@@ -7,6 +7,8 @@ app = Flask(__name__)
 @app.route('/analyze', methods=['POST'])
 def analyze():
     files = request.files.getlist('images')
+    print(f"Received {len(files)} files: {[file.filename for file in files]}")
+
     temp_dir = tempfile.mkdtemp()
 
     try:
