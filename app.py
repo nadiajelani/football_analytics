@@ -19,6 +19,8 @@ def analyze():
         return jsonify(result)
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()  # This prints full error to logs
         return jsonify({'error': str(e)}), 500
     finally:
         shutil.rmtree(temp_dir)
