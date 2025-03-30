@@ -107,7 +107,12 @@
           method: 'POST',
           body: formData
         });
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
 
+      const data = await response.json();
+      console.log("API Response:", data);
         const data = await response.json();
 
         document.getElementById('vi').textContent = `${data.inbound_velocity.toFixed(2)} m/s`;
