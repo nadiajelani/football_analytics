@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Football Dynamics Calculator - Coming Soon</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f4f8fb;
+      color: #333;
+      text-align: center;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 4rem;
+      color: #264653;
+    }
+    p {
+      font-size: 1.5rem;
+      color: #555;
+    }
+    .coming-soon {
+      font-size: 2rem;
+      margin: 1rem 0 2rem;
+      color: #2a9d8f;
+    }
+    .upload-box {
+      margin-top: 2rem;
+      padding: 2rem;
+      border: 2px dashed #2a9d8f;
+      border-radius: 10px;
+      background: #e0f7f1;
+    }
+    input[type="file"] {
+      margin: 1rem 0;
+    }
+    .btn {
+      background: #2a9d8f;
+      color: white;
+      padding: 0.8rem 2rem;
+      border: none;
+      border-radius: 5px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+    .btn:hover {
+      background: #21867a;
+    }
+    .output {
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Football Metrics</h1>
+    <p>AI-Based Inbound Velocity, Deformation & Contact Time Analysis</p>
+    <div class="coming-soon">Coming Soon</div>
+
+    <div class="upload-box">
+      <h2>Upload Image Sequence</h2>
+      <input type="file" id="imageInput" multiple accept="image/*">
+      <br>
+      <button class="btn" onclick="processImages()">Run Analysis</button>
+    </div>
+
+    <div class="output" id="outputBox">
+      <h3>Estimated Results</h3>
+      <p><strong>Inbound Velocity:</strong> <span id="vi"></span></p>
+      <p><strong>Contact Time:</strong> <span id="contactTime"></span></p>
+      <p><strong>Deformation:</strong> <span id="deformation"></span></p>
+    </div>
+  </div>
+
+  <script>
+    async function processImages() {
+      const output = document.getElementById('outputBox');
+      output.style.display = 'block';
+
+      const input = document.getElementById('imageInput');
+      const files = input.files;
+      if (!files.length) return alert("Please upload image frames first.");
+
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append('images', file);
+      }
+
+      try {
+        const response = await fetch('https://football-analytics-4qmg.onrender.com/analyze', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+
+        document.getElementById('vi').textContent = `${data.inbound_velocity.toFixed(2)} m/s`;
+        document.getElementById('contactTime').textContent = `${data.contact_time.toFixed(4)} s`;
+        document.getElementById('deformation').textContent = `${data.deformation.toFixed(2)} px`;
+      } catch (error) {
+        console.error('Error processing images:', error);
+        alert('Failed to process images. Please try again later.');
+      }
+    }
+  </script>
+</body>
+</html>
