@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from analysis import run_analysis  # your logic here
+from analysis import run_analysis
 import tempfile, os, shutil
 
 app = Flask(__name__)
@@ -13,7 +13,7 @@ def analyze():
         for i, file in enumerate(files):
             file.save(os.path.join(temp_dir, f"frame_{i:04d}.bmp"))
 
-        result = run_analysis(temp_dir)  # Your actual function
+        result = run_analysis(temp_dir)
         return jsonify(result)
 
     except Exception as e:
@@ -21,5 +21,7 @@ def analyze():
     finally:
         shutil.rmtree(temp_dir)
 
+# ✅ Bind to 0.0.0.0 and use the PORT Render provides
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
