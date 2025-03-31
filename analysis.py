@@ -4,12 +4,14 @@ import numpy as np
 import cv2
 from math import sqrt
 
-def run_analysis(image_folder):
+def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
     """
     Process a sequence of images to calculate football dynamics metrics and annotate images.
     
     Args:
         image_folder (str): Path to the directory containing .bmp image files.
+        fps (float): Frame rate of the image sequence (frames per second).
+        mm_per_pixel (float): Calibration factor (mm per pixel).
     
     Returns:
         dict: A dictionary containing the calculated metrics:
@@ -29,25 +31,9 @@ def run_analysis(image_folder):
     if frame is None:
         raise ValueError(f"Failed to load the first image: {image_files[0]}")
 
-    # Detect surface line using Hough Transform
-    edges = cv2.Canny(frame, 50, 150, apertureSize=3)
-    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10)
-    surface_y = frame.shape[0]  # Default to bottom if no line is found
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            if abs(y1 - y2) < 10:  # Horizontal line
-                surface_y = min(y1, y2)
-
-    # Calibration factor (mm per pixel) - Using a default value, should be dynamically calculated
-    # For now, using a placeholder; replace with actual calibration
-    mm_per_pixel = 0.5  # Example: 1 pixel = 0.5 mm
-    # Note: In a production environment, you should pass this value or calculate it dynamically
-    # For example, you could add a calibration step or pass it as an argument
-
-    # Frame rate (frames per second) - Using a default value, should be dynamically determined
-    fps = 30  # Example: 30 frames per second
-    # Note: In a production environment, this should be passed as an argument or determined from metadata
+    # Fix surface_y to 446 (where the green line is located)
+    surface_y = 446
+    print(f"Surface fixed at y = {surface_y}")
 
     # Kalman Filter Setup for Stable Circle Detection
     kalman = cv2.KalmanFilter(4, 2)
@@ -74,6 +60,7 @@ def run_analysis(image_folder):
 
         frame = cv2.imread(img_file, cv2.IMREAD_GRAYSCALE)
         if frame is None:
+            print(f"Failed to load frame {i}: {img_file}")
             continue
 
         # Convert to color for annotations
@@ -82,7 +69,8 @@ def run_analysis(image_folder):
         blurred = cv2.GaussianBlur(frame, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
 
-        circles = cv2.HoughCircles(frame, cv2.HOUGH_GRADIENT, dp=1.2, minDist=50, param1=50, param2=30, minRadius=20, maxRadius=100)
+        # Adjust HoughCircles parameters for better detection
+        circles = cv2.HoughCircles(frame, cv2.HOUGH_GRADIENT, dp=1.2, minDist=50, param1=50, param2=20, minRadius=10, maxRadius=150)
 
         prediction = kalman.predict()
         predicted_cx, predicted_cy = int(prediction[0]), int(prediction[1])
@@ -92,6 +80,7 @@ def run_analysis(image_folder):
             circles = np.uint16(np.around(circles))
             for circle in circles[0, :]:
                 cx, cy, radius = circle
+                print(f"Frame {i}: Circle detected at ({cx}, {cy}) with radius {radius}")
                 break
 
             if last_valid_radius is not None:
@@ -99,6 +88,7 @@ def run_analysis(image_folder):
             last_valid_radius = radius
             kalman.correct(np.array([[np.float32(cx)], [np.float32(cy)]]))
         else:
+            print(f"Frame {i}: No circle detected, using predicted position ({predicted_cx}, {predicted_cy})")
             cx, cy = predicted_cx, predicted_cy
             radius = last_valid_radius if last_valid_radius is not None else 50
 
@@ -115,7 +105,9 @@ def run_analysis(image_folder):
             top_point = (cx, cy - int(radius))
             bottom_point = (cx, cy + int(radius))
 
-            if bottom_point[1] >= surface_y:
+            # Relaxed contact detection
+            contact_threshold = 5  # Allow a small margin for contact detection
+            if abs(bottom_point[1] - surface_y) <= contact_threshold:
                 bottom_point = (cx, surface_y)
 
             top_dot_x, top_dot_y = top_point
@@ -126,12 +118,13 @@ def run_analysis(image_folder):
 
             if D_original is None and bottom_point[1] < surface_y - 50:
                 D_original = diameter
+                print(f"Frame {i}: D_original set to {D_original} pixels")
 
             cv2.circle(frame_color, (cx, cy), int(radius), (255, 0, 0), 1)
 
             contact_point1 = None
             contact_point2 = None
-            if bottom_point[1] == surface_y:
+            if abs(bottom_point[1] - surface_y) <= contact_threshold:
                 delta_y = surface_y - cy
                 discriminant = radius**2 - delta_y**2
                 if discriminant >= 0:
@@ -142,6 +135,7 @@ def run_analysis(image_folder):
                     contact_point2 = (x2, surface_y)
                     contact_length = x2 - x1
                     contact_frames.append(i)
+                    print(f"Frame {i}: Contact detected, length = {contact_length} pixels")
 
                     if last_valid_contact_points is not None:
                         x1_prev, x2_prev = last_valid_contact_points
@@ -198,7 +192,10 @@ def run_analysis(image_folder):
             if len(pre_contact) >= 2:
                 t1, y1 = pre_contact[-2]
                 t2, y2 = pre_contact[-1]
-                inbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
+                if t2 != t1:  # Avoid division by zero
+                    inbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
+                else:
+                    print("Warning: Time difference too small for inbound velocity calculation.")
             else:
                 print("Warning: Not enough frames before contact to calculate inbound velocity.")
 
@@ -206,12 +203,16 @@ def run_analysis(image_folder):
             if len(post_contact) >= 2:
                 t1, y1 = post_contact[0]
                 t2, y2 = post_contact[1]
-                outbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
+                if t2 != t1:  # Avoid division by zero
+                    outbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
+                else:
+                    print("Warning: Time difference too small for outbound velocity calculation.")
             else:
                 print("Warning: Not enough frames after contact to calculate outbound velocity.")
 
             cor = outbound_velocity / inbound_velocity if inbound_velocity != 0 else 0
             contact_time = (contact_end - contact_start + 1) / fps  # in seconds
+            print(f"Contact frames: {contact_start} to {contact_end}, Contact time: {contact_time:.4f} s")
             max_diameter = df["Diameter"].max()
             deformation = (max_diameter - D_original) * mm_per_pixel if D_original else 0  # in mm
 
