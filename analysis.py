@@ -45,6 +45,13 @@ def run_analysis(image_folder):
     # Frame rate (frames per second) - replace with actual value
     fps = 30  # Example: 30 frames per second
 
+    # Kalman Filter Setup for Stable Circle Detection
+    kalman = cv2.KalmanFilter(4, 2)
+    kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
+    kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
+    kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.02
+    kalman.statePre = np.array([[frame.shape[1] // 2], [frame.shape[0] // 2], [0], [0]], np.float32)
+
     # Initialize variables
     D_original = None
     last_valid_radius = None
@@ -73,6 +80,9 @@ def run_analysis(image_folder):
 
         circles = cv2.HoughCircles(frame, cv2.HOUGH_GRADIENT, dp=1.2, minDist=50, param1=50, param2=30, minRadius=20, maxRadius=100)
 
+        prediction = kalman.predict()
+        predicted_cx, predicted_cy = int(prediction[0]), int(prediction[1])
+
         cx, cy, radius = None, None, None
         if circles is not None:
             circles = np.uint16(np.around(circles))
@@ -83,9 +93,10 @@ def run_analysis(image_folder):
             if last_valid_radius is not None:
                 radius = int(0.85 * last_valid_radius + 0.15 * radius)
             last_valid_radius = radius
-
-        if radius is None:
-            continue
+            kalman.correct(np.array([[np.float32(cx)], [np.float32(cy)]]))
+        else:
+            cx, cy = predicted_cx, predicted_cy
+            radius = last_valid_radius if last_valid_radius is not None else 50
 
         ball_positions.append((i, cy))  # Track frame number and y-position
 
@@ -112,7 +123,6 @@ def run_analysis(image_folder):
             if D_original is None and bottom_point[1] < surface_y - 50:
                 D_original = diameter
 
-            # Draw the ball circle (blue)
             cv2.circle(frame_color, (cx, cy), int(radius), (255, 0, 0), 1)
 
             contact_point1 = None
@@ -139,19 +149,15 @@ def run_analysis(image_folder):
                     contact_dot1_x, contact_dot1_y = contact_point1
                     contact_dot2_x, contact_dot2_y = contact_point2
 
-                    # Draw yellow dots for contact points
                     cv2.circle(frame_color, contact_point1, 3, (0, 255, 255), -1)
                     cv2.circle(frame_color, contact_point2, 3, (0, 255, 255), -1)
 
-        # Draw green line for surface
         cv2.line(frame_color, (0, surface_y), (frame.shape[1], surface_y), (0, 255, 0), 1)
 
-        # Draw cyan dots for top and bottom points
         if top_point is not None and bottom_point is not None:
             cv2.circle(frame_color, top_point, 3, (255, 255, 0), -1)
             cv2.circle(frame_color, bottom_point, 3, (255, 255, 0), -1)
 
-        # Save the annotated image
         annotated_path = os.path.join(image_folder, f"annotated_frame_{i:04d}.bmp")
         cv2.imwrite(annotated_path, frame_color)
 
@@ -159,7 +165,6 @@ def run_analysis(image_folder):
         dot_records.append([i, top_dot_x, top_dot_y, bottom_dot_x, bottom_dot_y, 
                            contact_dot1_x, contact_dot1_y, contact_dot2_x, contact_dot2_y])
 
-    # Create DataFrames
     df = pd.DataFrame(data_records, columns=["Frame", "Ball_X", "Ball_Y", "Diameter", "Contact_Length"])
     dot_df = pd.DataFrame(dot_records, columns=["Frame", 
                                                 "Top_Dot_X", "Top_Dot_Y", 
@@ -168,7 +173,6 @@ def run_analysis(image_folder):
                                                 "Contact_Dot2_X", "Contact_Dot2_Y"])
 
     # Calculate Metrics
-    # 1. Inbound and Outbound Velocity
     ball_positions_mm = [(frame, y * mm_per_pixel) for frame, y in ball_positions]
     ball_positions_with_time = [(frame / fps, y) for frame, y in ball_positions_mm]
 
@@ -191,17 +195,11 @@ def run_analysis(image_folder):
     t2, y2 = post_contact[1]
     outbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
 
-    # 2. Coefficient of Restitution (COR)
     cor = outbound_velocity / inbound_velocity if inbound_velocity != 0 else 0
-
-    # 3. Contact Time
     contact_time = (contact_end - contact_start + 1) / fps  # in seconds
-
-    # 4. Deformation
     max_diameter = df["Diameter"].max()
     deformation = (max_diameter - D_original) * mm_per_pixel if D_original else 0  # in mm
 
-    # Return results in the expected format
     return {
         "inbound_velocity": inbound_velocity / 1000,  # Convert mm/s to m/s
         "outbound_velocity": outbound_velocity / 1000,  # Convert mm/s to m/s
