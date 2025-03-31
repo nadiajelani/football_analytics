@@ -1,8 +1,13 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from analysis import run_analysis
 import tempfile, os, shutil
 
 app = Flask(__name__)
+
+# Serve the index.html file from the root directory at the root URL
+@app.route('/')
+def serve_index():
+    return send_file('index.html')
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -25,14 +30,6 @@ def analyze():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
     finally:
-        # Optionally copy annotated images to a persistent directory for debugging
-        # import shutil
-        # persistent_dir = "/path/to/save/annotated/images"
-        # if not os.path.exists(persistent_dir):
-        #     os.makedirs(persistent_dir)
-        # for file in os.listdir(temp_dir):
-        #     if file.startswith("annotated_frame_"):
-        #         shutil.copy(os.path.join(temp_dir, file), persistent_dir)
         shutil.rmtree(temp_dir)
 
 if __name__ == '__main__':
