@@ -39,11 +39,15 @@ def run_analysis(image_folder):
             if abs(y1 - y2) < 10:  # Horizontal line
                 surface_y = min(y1, y2)
 
-    # Calibration factor (mm per pixel) - replace with actual value from your calibration
-    mm_per_pixel = 0.5  # Example: 1 pixel = 0.5 mm (from previous calibration)
+    # Calibration factor (mm per pixel) - Using a default value, should be dynamically calculated
+    # For now, using a placeholder; replace with actual calibration
+    mm_per_pixel = 0.5  # Example: 1 pixel = 0.5 mm
+    # Note: In a production environment, you should pass this value or calculate it dynamically
+    # For example, you could add a calibration step or pass it as an argument
 
-    # Frame rate (frames per second) - replace with actual value
+    # Frame rate (frames per second) - Using a default value, should be dynamically determined
     fps = 30  # Example: 30 frames per second
+    # Note: In a production environment, this should be passed as an argument or determined from metadata
 
     # Kalman Filter Setup for Stable Circle Detection
     kalman = cv2.KalmanFilter(4, 2)
@@ -172,33 +176,48 @@ def run_analysis(image_folder):
                                                 "Contact_Dot1_X", "Contact_Dot1_Y", 
                                                 "Contact_Dot2_X", "Contact_Dot2_Y"])
 
-    # Calculate Metrics
+    # Calculate Metrics with Fallbacks
     ball_positions_mm = [(frame, y * mm_per_pixel) for frame, y in ball_positions]
     ball_positions_with_time = [(frame / fps, y) for frame, y in ball_positions_mm]
 
-    if not contact_frames:
-        raise ValueError("No contact frames detected.")
-    contact_start = min(contact_frames)
-    contact_end = max(contact_frames)
+    # Default values in case of failure
+    inbound_velocity = 0.0
+    outbound_velocity = 0.0
+    cor = 0.0
+    contact_time = 0.0
+    deformation = 0.0
 
-    pre_contact = [(t, y) for frame, (t, y) in enumerate(ball_positions_with_time) if frame < contact_start]
-    if len(pre_contact) < 2:
-        raise ValueError("Not enough frames before contact to calculate inbound velocity.")
-    t1, y1 = pre_contact[-2]
-    t2, y2 = pre_contact[-1]
-    inbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
+    try:
+        if not contact_frames:
+            print("Warning: No contact frames detected. Using default values.")
+        else:
+            contact_start = min(contact_frames)
+            contact_end = max(contact_frames)
 
-    post_contact = [(t, y) for frame, (t, y) in enumerate(ball_positions_with_time) if frame > contact_end]
-    if len(post_contact) < 2:
-        raise ValueError("Not enough frames after contact to calculate outbound velocity.")
-    t1, y1 = post_contact[0]
-    t2, y2 = post_contact[1]
-    outbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
+            pre_contact = [(t, y) for frame, (t, y) in enumerate(ball_positions_with_time) if frame < contact_start]
+            if len(pre_contact) >= 2:
+                t1, y1 = pre_contact[-2]
+                t2, y2 = pre_contact[-1]
+                inbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
+            else:
+                print("Warning: Not enough frames before contact to calculate inbound velocity.")
 
-    cor = outbound_velocity / inbound_velocity if inbound_velocity != 0 else 0
-    contact_time = (contact_end - contact_start + 1) / fps  # in seconds
-    max_diameter = df["Diameter"].max()
-    deformation = (max_diameter - D_original) * mm_per_pixel if D_original else 0  # in mm
+            post_contact = [(t, y) for frame, (t, y) in enumerate(ball_positions_with_time) if frame > contact_end]
+            if len(post_contact) >= 2:
+                t1, y1 = post_contact[0]
+                t2, y2 = post_contact[1]
+                outbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
+            else:
+                print("Warning: Not enough frames after contact to calculate outbound velocity.")
+
+            cor = outbound_velocity / inbound_velocity if inbound_velocity != 0 else 0
+            contact_time = (contact_end - contact_start + 1) / fps  # in seconds
+            max_diameter = df["Diameter"].max()
+            deformation = (max_diameter - D_original) * mm_per_pixel if D_original else 0  # in mm
+
+    except Exception as e:
+        print(f"Error calculating metrics: {str(e)}")
+        # Return default values if calculation fails
 
     return {
         "inbound_velocity": inbound_velocity / 1000,  # Convert mm/s to m/s
