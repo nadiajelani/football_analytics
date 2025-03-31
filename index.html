@@ -114,43 +114,6 @@
       const data = await response.json();
       console.log("API Response:", data);
 
-      <script>
-  async function processImages() {
-    const output = document.getElementById('outputBox');
-    output.style.display = 'block';
-
-    const input = document.getElementById('imageInput');
-    const files = input.files;
-    if (!files.length) return alert("Please upload image frames first.");
-
-    const formData = new FormData();
-    for (const file of files) {
-      formData.append('images', file);
-    }
-
-    try {
-      const response = await fetch('/analyze', {
-        method: 'POST',
-        body: formData
-      });
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}: ${await response.text()}`);
-      }
-
-      const data = await response.json();
-      console.log("API Response:", data);
-
-      document.getElementById('vi').textContent = `${data.inbound_velocity?.toFixed(2) || 'N/A'} m/s`;
-      document.getElementById('vo').textContent = `${data.outbound_velocity?.toFixed(2) || 'N/A'} m/s`;
-      document.getElementById('cor').textContent = `${data.cor?.toFixed(2) || 'N/A'}`;
-      document.getElementById('contactTime').textContent = `${data.contact_time?.toFixed(4) || 'N/A'} s`;
-      document.getElementById('deformation').textContent = `${data.deformation?.toFixed(2) || 'N/A'} mm`;
-    } catch (error) {
-      console.error('Error processing images:', error);
-      alert(`Failed to process images: ${error.message}. Please try again later.`);
-    }
-  }
-</script>
     }
   }
 </script>
