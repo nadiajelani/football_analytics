@@ -6,7 +6,7 @@ from math import sqrt
 
 def run_analysis(image_folder):
     """
-    Process a sequence of images to calculate football dynamics metrics.
+    Process a sequence of images to calculate football dynamics metrics and annotate images.
     
     Args:
         image_folder (str): Path to the directory containing .bmp image files.
@@ -39,10 +39,10 @@ def run_analysis(image_folder):
             if abs(y1 - y2) < 10:  # Horizontal line
                 surface_y = min(y1, y2)
 
-    # Assume a calibration factor (mm per pixel) - replace with actual value
+    # Calibration factor (mm per pixel) - replace with actual value from your calibration
     mm_per_pixel = 0.5  # Example: 1 pixel = 0.5 mm (from previous calibration)
 
-    # Assume frame rate (frames per second) - replace with actual value
+    # Frame rate (frames per second) - replace with actual value
     fps = 30  # Example: 30 frames per second
 
     # Initialize variables
@@ -50,13 +50,13 @@ def run_analysis(image_folder):
     last_valid_radius = None
     last_valid_contact_points = None
     data_records = []
-
-    # Process frames (adjust range as needed)
-    start_frame = 0
-    end_frame = len(image_files)
+    dot_records = []
     ball_positions = []  # To track ball center (cy) over time
     contact_frames = []  # To track frames where ball is in contact
 
+    # Process frames
+    start_frame = 0
+    end_frame = len(image_files)
     for i, img_file in enumerate(image_files):
         if i < start_frame or i >= end_frame:
             continue
@@ -64,6 +64,9 @@ def run_analysis(image_folder):
         frame = cv2.imread(img_file, cv2.IMREAD_GRAYSCALE)
         if frame is None:
             continue
+
+        # Convert to color for annotations
+        frame_color = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
         blurred = cv2.GaussianBlur(frame, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
@@ -86,61 +89,107 @@ def run_analysis(image_folder):
 
         ball_positions.append((i, cy))  # Track frame number and y-position
 
-        top_point = (cx, cy - int(radius))
-        bottom_point = (cx, cy + int(radius))
-        if bottom_point[1] >= surface_y:
-            bottom_point = (cx, surface_y)
-
-        diameter = bottom_point[1] - top_point[1]
-        diameter = max(diameter, 20)
-
-        if D_original is None and bottom_point[1] < surface_y - 50:
-            D_original = diameter
-
+        top_dot_x, top_dot_y = None, None
+        bottom_dot_x, bottom_dot_y = None, None
+        contact_dot1_x, contact_dot1_y = None, None
+        contact_dot2_x, contact_dot2_y = None, None
+        diameter = 0
         contact_length = 0
-        if bottom_point[1] == surface_y:
-            delta_y = surface_y - cy
-            discriminant = radius**2 - delta_y**2
-            if discriminant >= 0:
-                sqrt_disc = np.sqrt(discriminant)
-                x1 = int(cx - sqrt_disc)
-                x2 = int(cx + sqrt_disc)
-                contact_length = x2 - x1
-                contact_frames.append(i)
+
+        if radius is not None:
+            top_point = (cx, cy - int(radius))
+            bottom_point = (cx, cy + int(radius))
+
+            if bottom_point[1] >= surface_y:
+                bottom_point = (cx, surface_y)
+
+            top_dot_x, top_dot_y = top_point
+            bottom_dot_x, bottom_dot_y = bottom_point
+
+            diameter = bottom_point[1] - top_point[1]
+            diameter = max(diameter, 20)
+
+            if D_original is None and bottom_point[1] < surface_y - 50:
+                D_original = diameter
+
+            # Draw the ball circle (blue)
+            cv2.circle(frame_color, (cx, cy), int(radius), (255, 0, 0), 1)
+
+            contact_point1 = None
+            contact_point2 = None
+            if bottom_point[1] == surface_y:
+                delta_y = surface_y - cy
+                discriminant = radius**2 - delta_y**2
+                if discriminant >= 0:
+                    sqrt_disc = np.sqrt(discriminant)
+                    x1 = int(cx - sqrt_disc)
+                    x2 = int(cx + sqrt_disc)
+                    contact_point1 = (x1, surface_y)
+                    contact_point2 = (x2, surface_y)
+                    contact_length = x2 - x1
+                    contact_frames.append(i)
+
+                    if last_valid_contact_points is not None:
+                        x1_prev, x2_prev = last_valid_contact_points
+                        if abs(x1 - x1_prev) > 10 or abs(x2 - x2_prev) > 10:
+                            x1, x2 = x1_prev, x2_prev
+                    
+                    last_valid_contact_points = (x1, x2)
+
+                    contact_dot1_x, contact_dot1_y = contact_point1
+                    contact_dot2_x, contact_dot2_y = contact_point2
+
+                    # Draw yellow dots for contact points
+                    cv2.circle(frame_color, contact_point1, 3, (0, 255, 255), -1)
+                    cv2.circle(frame_color, contact_point2, 3, (0, 255, 255), -1)
+
+        # Draw green line for surface
+        cv2.line(frame_color, (0, surface_y), (frame.shape[1], surface_y), (0, 255, 0), 1)
+
+        # Draw cyan dots for top and bottom points
+        if top_point is not None and bottom_point is not None:
+            cv2.circle(frame_color, top_point, 3, (255, 255, 0), -1)
+            cv2.circle(frame_color, bottom_point, 3, (255, 255, 0), -1)
+
+        # Save the annotated image
+        annotated_path = os.path.join(image_folder, f"annotated_frame_{i:04d}.bmp")
+        cv2.imwrite(annotated_path, frame_color)
 
         data_records.append([i, cx, cy, diameter, contact_length])
+        dot_records.append([i, top_dot_x, top_dot_y, bottom_dot_x, bottom_dot_y, 
+                           contact_dot1_x, contact_dot1_y, contact_dot2_x, contact_dot2_y])
 
-    # Create DataFrame
+    # Create DataFrames
     df = pd.DataFrame(data_records, columns=["Frame", "Ball_X", "Ball_Y", "Diameter", "Contact_Length"])
+    dot_df = pd.DataFrame(dot_records, columns=["Frame", 
+                                                "Top_Dot_X", "Top_Dot_Y", 
+                                                "Bottom_Dot_X", "Bottom_Dot_Y", 
+                                                "Contact_Dot1_X", "Contact_Dot1_Y", 
+                                                "Contact_Dot2_X", "Contact_Dot2_Y"])
 
     # Calculate Metrics
     # 1. Inbound and Outbound Velocity
-    # Convert y-positions to mm
     ball_positions_mm = [(frame, y * mm_per_pixel) for frame, y in ball_positions]
-    # Calculate time (in seconds) for each frame
     ball_positions_with_time = [(frame / fps, y) for frame, y in ball_positions_mm]
 
-    # Find contact period
     if not contact_frames:
         raise ValueError("No contact frames detected.")
     contact_start = min(contact_frames)
     contact_end = max(contact_frames)
 
-    # Inbound velocity: before contact
     pre_contact = [(t, y) for frame, (t, y) in enumerate(ball_positions_with_time) if frame < contact_start]
     if len(pre_contact) < 2:
         raise ValueError("Not enough frames before contact to calculate inbound velocity.")
     t1, y1 = pre_contact[-2]
     t2, y2 = pre_contact[-1]
-    inbound_velocity = abs((y2 - y1) / (t2 - t1))  # m/s (assuming mm/s converted to m/s)
+    inbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
 
-    # Outbound velocity: after contact
     post_contact = [(t, y) for frame, (t, y) in enumerate(ball_positions_with_time) if frame > contact_end]
     if len(post_contact) < 2:
         raise ValueError("Not enough frames after contact to calculate outbound velocity.")
     t1, y1 = post_contact[0]
     t2, y2 = post_contact[1]
-    outbound_velocity = abs((y2 - y1) / (t2 - t1))  # m/s
+    outbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
 
     # 2. Coefficient of Restitution (COR)
     cor = outbound_velocity / inbound_velocity if inbound_velocity != 0 else 0
