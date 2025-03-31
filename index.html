@@ -140,7 +140,6 @@
       const data = await response.json();
       console.log("API Response:", data);
 
-      // Update DOM with results, using optional chaining and fallback values
       document.getElementById('vi').textContent = `${data.inbound_velocity?.toFixed(2) || 'N/A'} m/s`;
       document.getElementById('vo').textContent = `${data.outbound_velocity?.toFixed(2) || 'N/A'} m/s`;
       document.getElementById('cor').textContent = `${data.cor?.toFixed(2) || 'N/A'}`;
