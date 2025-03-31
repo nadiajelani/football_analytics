@@ -103,7 +103,7 @@
     }
 
     try {
-      const response = await fetch('https://football-analytics-4qmg.onrender.com/analyze', {
+      const response = await fetch('/analyze', {
         method: 'POST',
         body: formData
       });
@@ -114,7 +114,16 @@
       const data = await response.json();
       console.log("API Response:", data);
 
+      document.getElementById('vi').textContent = `${data.inbound_velocity?.toFixed(2) || 'N/A'} m/s`;
+      document.getElementById('vo').textContent = `${data.outbound_velocity?.toFixed(2) || 'N/A'} m/s`;
+      document.getElementById('cor').textContent = `${data.cor?.toFixed(2) || 'N/A'}`;
+      document.getElementById('contactTime').textContent = `${data.contact_time?.toFixed(4) || 'N/A'} s`;
+      document.getElementById('deformation').textContent = `${data.deformation?.toFixed(2) || 'N/A'} mm`;
+    } catch (error) {
+      console.error('Error processing images:', error);
+      alert(`Failed to process images: ${error.message}. Please try again later.`);
     }
+  
   }
 </script>
 </body>
