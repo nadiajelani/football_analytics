@@ -4,14 +4,14 @@ import numpy as np
 import cv2
 from math import sqrt
 
-def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
+def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
     """
     Process a sequence of images to calculate football dynamics metrics and annotate images.
     
     Args:
         image_folder (str): Path to the directory containing .bmp image files.
-        fps (float): Frames per second of the image sequence (default: 30).
-        mm_per_pixel (float): Millimeters per pixel for calibration (default: 0.5).
+        mm_per_pixel (float): Calibration factor in mm per pixel (default: 0.5).
+        fps (float): Frame rate in frames per second (default: 30).
     
     Returns:
         dict: A dictionary containing the calculated metrics:
@@ -25,13 +25,13 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
     image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.bmp')])
     if not image_files:
         raise ValueError(f"No .bmp files found in {image_folder}.")
-
-    print(f"Processing {len(image_files)} images from {image_folder}")
+    print(f"Found {len(image_files)} .bmp files in {image_folder}")
 
     # Read the first image to initialize
     frame = cv2.imread(image_files[0], cv2.IMREAD_GRAYSCALE)
     if frame is None:
         raise ValueError(f"Failed to load the first image: {image_files[0]}")
+    print(f"Image dimensions: {frame.shape}")
 
     # Detect surface line using Hough Transform
     edges = cv2.Canny(frame, 50, 150, apertureSize=3)
@@ -42,6 +42,7 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
             x1, y1, x2, y2 = line[0]
             if abs(y1 - y2) < 10:  # Horizontal line
                 surface_y = min(y1, y2)
+                break
     print(f"Detected surface at y = {surface_y}")
 
     # Kalman Filter Setup for Stable Circle Detection
@@ -69,7 +70,7 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
 
         frame = cv2.imread(img_file, cv2.IMREAD_GRAYSCALE)
         if frame is None:
-            print(f"Failed to load image: {img_file}")
+            print(f"Failed to load frame {i}: {img_file}")
             continue
 
         # Convert to color for annotations
@@ -89,12 +90,14 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
             for circle in circles[0, :]:
                 cx, cy, radius = circle
                 break
+            print(f"Frame {i}: Circle detected at ({cx}, {cy}) with radius {radius}")
 
             if last_valid_radius is not None:
                 radius = int(0.85 * last_valid_radius + 0.15 * radius)
             last_valid_radius = radius
             kalman.correct(np.array([[np.float32(cx)], [np.float32(cy)]]))
         else:
+            print(f"Frame {i}: No circle detected, using predicted position ({predicted_cx}, {predicted_cy})")
             cx, cy = predicted_cx, predicted_cy
             radius = last_valid_radius if last_valid_radius is not None else 50
 
@@ -119,9 +122,11 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
 
             diameter = bottom_point[1] - top_point[1]
             diameter = max(diameter, 20)
+            print(f"Frame {i}: Diameter = {diameter} pixels")
 
             if D_original is None and bottom_point[1] < surface_y - 50:
                 D_original = diameter
+                print(f"Frame {i}: D_original set to {D_original} pixels")
 
             cv2.circle(frame_color, (cx, cy), int(radius), (255, 0, 0), 1)
 
@@ -138,7 +143,7 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
                     contact_point2 = (x2, surface_y)
                     contact_length = x2 - x1
                     contact_frames.append(i)
-                    print(f"Contact detected at frame {i}: Contact Length = {contact_length} pixels")
+                    print(f"Frame {i}: Contact detected! Contact Length: {contact_length} pixels")
 
                     if last_valid_contact_points is not None:
                         x1_prev, x2_prev = last_valid_contact_points
@@ -152,6 +157,8 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
 
                     cv2.circle(frame_color, contact_point1, 3, (0, 255, 255), -1)
                     cv2.circle(frame_color, contact_point2, 3, (0, 255, 255), -1)
+            else:
+                print(f"Frame {i}: No contact (bottom_point[1] = {bottom_point[1]}, surface_y = {surface_y})")
 
         cv2.line(frame_color, (0, surface_y), (frame.shape[1], surface_y), (0, 255, 0), 1)
 
@@ -190,7 +197,7 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
         else:
             contact_start = min(contact_frames)
             contact_end = max(contact_frames)
-            print(f"Contact frames: {contact_start} to {contact_end} ({len(contact_frames)} frames)")
+            print(f"Contact frames: {contact_frames}, Start: {contact_start}, End: {contact_end}")
 
             pre_contact = [(t, y) for frame, (t, y) in enumerate(ball_positions_with_time) if frame < contact_start]
             print(f"Pre-contact frames: {len(pre_contact)}")
@@ -198,7 +205,7 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
                 t1, y1 = pre_contact[-2]
                 t2, y2 = pre_contact[-1]
                 inbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
-                print(f"Inbound velocity: {inbound_velocity} mm/s")
+                print(f"Inbound velocity: {inbound_velocity} mm/s (t1={t1}, y1={y1}, t2={t2}, y2={y2})")
             else:
                 print("Warning: Not enough frames before contact to calculate inbound velocity.")
 
@@ -208,16 +215,16 @@ def run_analysis(image_folder, fps=30, mm_per_pixel=0.5):
                 t1, y1 = post_contact[0]
                 t2, y2 = post_contact[1]
                 outbound_velocity = abs((y2 - y1) / (t2 - t1))  # mm/s
-                print(f"Outbound velocity: {outbound_velocity} mm/s")
+                print(f"Outbound velocity: {outbound_velocity} mm/s (t1={t1}, y1={y1}, t2={t2}, y2={y2})")
             else:
                 print("Warning: Not enough frames after contact to calculate outbound velocity.")
 
             cor = outbound_velocity / inbound_velocity if inbound_velocity != 0 else 0
             contact_time = (contact_end - contact_start + 1) / fps  # in seconds
-            print(f"Contact time: {contact_time} s (based on {contact_end - contact_start + 1} frames at {fps} fps)")
+            print(f"Contact time: {contact_time} s")
             max_diameter = df["Diameter"].max()
             deformation = (max_diameter - D_original) * mm_per_pixel if D_original else 0  # in mm
-            print(f"Deformation: {deformation} mm (max diameter: {max_diameter}, D_original: {D_original})")
+            print(f"Deformation: {deformation} mm (max_diameter={max_diameter}, D_original={D_original})")
 
     except Exception as e:
         print(f"Error calculating metrics: {str(e)}")
