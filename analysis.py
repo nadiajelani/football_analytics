@@ -22,10 +22,10 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
               - deformation (mm)
     """
     # Load image files
-    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.bmp')])
+    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.lower().endswith(('.bmp', '.png', '.jpg', '.jpeg'))])
     if not image_files:
-        raise ValueError(f"No .bmp files found in {image_folder}.")
-    print(f"Found {len(image_files)} .bmp files in {image_folder}")
+        raise ValueError(f"No supported image files (.bmp, .png, .jpg, .jpeg) found in {image_folder}.")
+    print(f"Found {len(image_files)} supported image files in {image_folder}")
 
     # Read the first image to initialize
     frame = cv2.imread(image_files[0], cv2.IMREAD_GRAYSCALE)
@@ -33,9 +33,9 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
         raise ValueError(f"Failed to load the first image: {image_files[0]}")
     print(f"Image dimensions: {frame.shape}")
 
-    # Detect surface line using Hough Transform
+    # Detect surface line using Hough Transform with adjusted parameters
     edges = cv2.Canny(frame, 50, 150, apertureSize=3)
-    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10)
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=50, maxLineGap=20)
     surface_y = frame.shape[0]  # Default to bottom if no line is found
     if lines is not None:
         for line in lines:
@@ -79,7 +79,8 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
         blurred = cv2.GaussianBlur(frame, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
 
-        circles = cv2.HoughCircles(frame, cv2.HOUGH_GRADIENT, dp=1.2, minDist=50, param1=50, param2=30, minRadius=20, maxRadius=100)
+        # Adjust HoughCircles parameters for better detection
+        circles = cv2.HoughCircles(frame, cv2.HOUGH_GRADIENT, dp=1.2, minDist=50, param1=50, param2=20, minRadius=10, maxRadius=150)
 
         prediction = kalman.predict()
         predicted_cx, predicted_cy = int(prediction[0]), int(prediction[1])
@@ -114,7 +115,8 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
             top_point = (cx, cy - int(radius))
             bottom_point = (cx, cy + int(radius))
 
-            if bottom_point[1] >= surface_y:
+            # Adjust contact detection with a margin
+            if abs(bottom_point[1] - surface_y) <= 2:  # Within 2 pixels of the surface
                 bottom_point = (cx, surface_y)
 
             top_dot_x, top_dot_y = top_point
@@ -124,7 +126,8 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
             diameter = max(diameter, 20)
             print(f"Frame {i}: Diameter = {diameter} pixels")
 
-            if D_original is None and bottom_point[1] < surface_y - 50:
+            # Relax the condition for setting D_original
+            if D_original is None and bottom_point[1] < surface_y - 20:  # Ball at least 20 pixels above surface
                 D_original = diameter
                 print(f"Frame {i}: D_original set to {D_original} pixels")
 
@@ -132,7 +135,7 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
 
             contact_point1 = None
             contact_point2 = None
-            if bottom_point[1] == surface_y:
+            if abs(bottom_point[1] - surface_y) <= 2:  # Contact detection with margin
                 delta_y = surface_y - cy
                 discriminant = radius**2 - delta_y**2
                 if discriminant >= 0:
