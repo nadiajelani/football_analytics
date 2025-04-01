@@ -1,14 +1,4 @@
-import os
-import pandas as pd
-import numpy as np
-import cv2
-from math import sqrt
-
 def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
-    # At the start of run_analysis
-    max_images = 15
-    image_files = image_files[:max_images]
-    print(f"Limited to {len(image_files)} images to avoid timeout")
     """
     Process a sequence of images to calculate football dynamics metrics and annotate images.
     
@@ -31,6 +21,12 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
         raise ValueError(f"No supported image files (.bmp, .png, .jpg, .jpeg) found in {image_folder}.")
     print(f"Found {len(image_files)} supported image files in {image_folder}")
 
+    # Limit the number of images to avoid timeout
+    max_images = 15
+    image_files = image_files[:max_images]
+    print(f"Limited to {len(image_files)} images to avoid timeout")
+
+    # Rest of the code remains the same...
     # Read the first image to initialize
     frame = cv2.imread(image_files[0], cv2.IMREAD_GRAYSCALE)
     if frame is None:
