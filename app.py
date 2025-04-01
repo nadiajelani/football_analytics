@@ -16,10 +16,10 @@ def analyze():
     files = request.files.getlist('images')
     print(f"Received {len(files)} files: {[file.filename for file in files]}")
 
-    # Get fps and mm_per_pixel from form data, with defaults
-    fps = float(request.form.get('fps', 30))
-    mm_per_pixel = float(request.form.get('mm_per_pixel', 0.5))
-    print(f"Using fps={fps}, mm_per_pixel={mm_per_pixel}")
+    # Get mm_per_pixel and fps from the request (if provided)
+    mm_per_pixel = float(request.form.get('mm_per_pixel', 0.5))  # Default to 0.5
+    fps = float(request.form.get('fps', 30))  # Default to 30
+    print(f"Using mm_per_pixel={mm_per_pixel}, fps={fps}")
 
     temp_dir = tempfile.mkdtemp()
 
@@ -27,7 +27,8 @@ def analyze():
         for i, file in enumerate(files):
             file.save(os.path.join(temp_dir, f"frame_{i:04d}.bmp"))
 
-        result = run_analysis(temp_dir, fps=fps, mm_per_pixel=mm_per_pixel)
+        result = run_analysis(temp_dir, mm_per_pixel=mm_per_pixel, fps=fps)
+        print(f"Analysis result: {result}")
         return jsonify(result)
 
     except Exception as e:
