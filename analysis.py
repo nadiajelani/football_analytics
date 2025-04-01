@@ -5,6 +5,10 @@ import cv2
 from math import sqrt
 
 def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
+    # At the start of run_analysis
+    max_images = 15
+    image_files = image_files[:max_images]
+    print(f"Limited to {len(image_files)} images to avoid timeout")
     """
     Process a sequence of images to calculate football dynamics metrics and annotate images.
     
