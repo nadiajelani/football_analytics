@@ -1,5 +1,6 @@
-import os  # Add this import
-import cv2  # Add this import
+import os
+import cv2
+import numpy as np  # Add this import for cv2.imdecode
 from flask import Flask, request, jsonify, send_file
 from analysis import run_analysis
 import shutil
@@ -28,11 +29,13 @@ def analyze():
     temp_dir = tempfile.mkdtemp()
     print(f"Created temporary directory: {temp_dir}")
 
-    max_dim = 320  # Reduced from 640 to optimize for Render
+    max_dim = 320
     for i, file in enumerate(files):
         if file:
             img_path = os.path.join(temp_dir, f"frame_{i:04d}.jpg")
-            img = cv2.imread(file, cv2.IMREAD_GRAYSCALE)
+            # Read the file into a NumPy array
+            file_bytes = np.frombuffer(file.read(), np.uint8)
+            img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
             if img is None:
                 shutil.rmtree(temp_dir)
                 return jsonify({'error': f'Failed to load image {file.filename}'}), 400
