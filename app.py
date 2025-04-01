@@ -43,7 +43,7 @@ def analyze():
                 continue
 
             # Resize the image to reduce processing load (e.g., max dimension 640)
-            max_dim = 640
+            max_dim = 320
             height, width = img.shape
             if max(height, width) > max_dim:
                 scale = max_dim / max(height, width)
