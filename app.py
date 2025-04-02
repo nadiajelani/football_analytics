@@ -3,7 +3,7 @@ import numpy as np
 import os
 import pandas as pd
 from scipy.signal import savgol_filter
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, send_file, after_this_request
 import shutil
 import tempfile
 import logging
@@ -127,7 +127,7 @@ def process_images(image_folder, output_dir):
         logger.error(f"Error in process_images: {str(e)}")
         raise
 
-def calculate_metrics(positions_csv_path):
+def calculate_metrics(positions_csv_path, mm_per_pixel, fps):
     try:
         # Load the positions CSV
         data = pd.read_csv(positions_csv_path)
@@ -136,13 +136,13 @@ def calculate_metrics(positions_csv_path):
         data["Center_Y"] = (data["Top_Dot_Y"] + data["Bottom_Dot_Y"]) / 2
 
         # Frame rate and time calculation
-        frame_rate = 10000  # frames per second
+        frame_rate = fps  # Use user-provided FPS
         delta_t = 1 / frame_rate  # time between frames in seconds
 
         # Identify contact frames (where Contact_Dot1_X is not NaN)
         contact_frames = data[data["Contact_Dot1_X"].notna()]
         if contact_frames.empty:
-            raise ValueError("No contact frames detected")
+            raise ValueError("No contact frames detected. Please ensure the image sequence includes frames where the ball contacts the surface.")
 
         # Contact start and end frames
         contact_start_frame = contact_frames["Frame"].iloc[0]
@@ -153,7 +153,7 @@ def calculate_metrics(positions_csv_path):
         pre_contact_frame = contact_start_frame - 1
         pre_pre_contact_frame = pre_contact_frame - 1
         if pre_pre_contact_frame < data["Frame"].min() or pre_contact_frame >= data["Frame"].max():
-            raise ValueError("Not enough frames before contact to calculate inbound velocity")
+            raise ValueError("Not enough frames before contact to calculate inbound velocity. Please upload more frames capturing the ball's descent.")
 
         frame_pre_pre = data[data["Frame"] == pre_pre_contact_frame]
         frame_pre = data[data["Frame"] == pre_contact_frame]
@@ -164,7 +164,7 @@ def calculate_metrics(positions_csv_path):
         post_contact_frame = contact_end_frame + 1
         post_post_contact_frame = post_contact_frame + 1
         if post_contact_frame >= data["Frame"].max() or post_post_contact_frame > data["Frame"].max():
-            raise ValueError("Not enough frames after contact to calculate outbound velocity")
+            raise ValueError("Not enough frames after contact to calculate outbound velocity. Please upload more frames capturing the ball's rebound.")
 
         frame_post = data[data["Frame"] == post_contact_frame]
         frame_post_post = data[data["Frame"] == post_post_contact_frame]
@@ -174,8 +174,8 @@ def calculate_metrics(positions_csv_path):
         # Calculate COR
         cor = abs(V_0) / abs(V_i)
 
-        # Convert velocities to meters per second (assuming ball diameter = 0.22 meters, 172 pixels)
-        pixel_to_meter = 0.22 / 172  # meters per pixel
+        # Convert velocities to meters per second using user-provided mm per pixel
+        pixel_to_meter = mm_per_pixel / 1000  # Convert mm to meters
         inbound_velocity = V_i * pixel_to_meter
         outbound_velocity = V_0 * pixel_to_meter
 
@@ -199,7 +199,7 @@ def calculate_metrics(positions_csv_path):
 # HTML template for the upload page
 @app.route('/')
 def upload_form():
-    return render_template_string('''
+    return '''
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -211,28 +211,41 @@ def upload_form():
                 font-family: Arial, sans-serif;
                 margin: 0;
                 padding: 20px;
-                background-color: #f4f4f4;
-                color: #333;
+                background-color: #f0f4f8;
             }
             .container {
                 max-width: 800px;
                 margin: 0 auto;
                 background: white;
                 padding: 20px;
-                border-radius: 5px;
+                border-radius: 10px;
                 box-shadow: 0 0 10px rgba(0,0,0,0.1);
             }
             h1 {
                 text-align: center;
                 color: #2c3e50;
                 font-size: 2.5em;
-                margin-bottom: 10px;
+                margin-bottom: 0;
             }
             h3 {
                 text-align: center;
                 color: #7f8c8d;
                 font-size: 1.2em;
+                margin-top: 5px;
                 margin-bottom: 20px;
+            }
+            .upload-section {
+                background-color: #e6f3f3;
+                border: 2px dashed #1abc9c;
+                border-radius: 10px;
+                padding: 20px;
+                text-align: center;
+                margin-bottom: 20px;
+            }
+            .upload-section h4 {
+                margin: 0 0 15px 0;
+                color: #2c3e50;
+                font-size: 1.5em;
             }
             .form-group {
                 margin-bottom: 15px;
@@ -240,56 +253,55 @@ def upload_form():
             label {
                 display: block;
                 margin-bottom: 5px;
-                font-weight: bold;
                 color: #34495e;
             }
-            input[type="file"] {
+            input[type="file"], input[type="number"] {
                 width: 100%;
                 padding: 10px;
-                border: 1px dashed #95a5a6;
-                border-radius: 4px;
-                background-color: #ecf0f1;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                box-sizing: border-box;
+            }
+            input[type="number"] {
+                width: 100px;
+                display: inline-block;
+                margin-left: 10px;
             }
             button {
                 display: block;
                 width: 100%;
-                padding: 10px;
-                background-color: #28a745;
+                padding: 12px;
+                background-color: #1abc9c;
                 color: white;
                 border: none;
-                border-radius: 4px;
+                border-radius: 5px;
                 cursor: pointer;
-                font-size: 16px;
+                font-size: 1.1em;
                 transition: background-color 0.3s;
             }
             button:hover {
-                background-color: #218838;
+                background-color: #16a085;
             }
             .results {
                 margin-top: 20px;
                 padding: 15px;
-                background-color: #f9f9f9;
-                border-radius: 4px;
+                background-color: #fff;
                 border: 1px solid #ddd;
+                border-radius: 5px;
             }
-            .results h3 {
-                margin-top: 0;
-                color: #34495e;
-                font-size: 1.5em;
+            .results h4 {
+                margin: 0 0 10px 0;
+                color: #2c3e50;
+                font-size: 1.3em;
             }
             .results p {
                 margin: 5px 0;
-                font-size: 1em;
-                color: #2c3e50;
-            }
-            .results p strong {
-                display: inline-block;
-                width: 200px;
+                color: #34495e;
             }
             .message {
                 margin-top: 15px;
                 padding: 10px;
-                border-radius: 4px;
+                border-radius: 5px;
                 text-align: center;
             }
             .success {
@@ -300,31 +312,48 @@ def upload_form():
                 background-color: #f8d7da;
                 color: #721c24;
             }
+            a {
+                color: #3498db;
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Football Metrics</h1>
-            <h3>Based Inbound Velocity, Deformation & Contact Time Analysis</h3>
-            <form action="/upload" method="post" enctype="multipart/form-data">
-                <div class="form-group">
-                    <label for="images">Upload Image Sequence:</label>
-                    <input type="file" name="images" id="images" multiple accept=".bmp" required>
-                </div>
-                <button type="submit">Run Analysis</button>
-            </form>
+            <h3>AI-Based Inbound Velocity, Deformation & Contact Time Analysis</h3>
+            <div class="upload-section">
+                <h4>Upload Image Sequence</h4>
+                <form action="/upload" method="post" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <input type="file" name="images" id="images" multiple accept=".bmp" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="mm_per_pixel">mm per Pixel:</label>
+                        <input type="number" name="mm_per_pixel" id="mm_per_pixel" step="0.1" value="0.5" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="fps">Frames per Second (FPS):</label>
+                        <input type="number" name="fps" id="fps" step="1" value="30" required>
+                    </div>
+                    <button type="submit">Run Analysis</button>
+                </form>
+            </div>
             <div class="results">
-                <h3>Estimated Results</h3>
-                <p><strong>Inbound Velocity:</strong> <span id="inbound_velocity"></span></p>
-                <p><strong>Outbound Velocity:</strong> <span id="outbound_velocity"></span></p>
-                <p><strong>Coefficient of Restitution (COR):</strong> <span id="cor"></span></p>
-                <p><strong>Contact Time:</strong> <span id="contact_time"></span></p>
-                <p><strong>Deformation:</strong> <span id="deformation"></span></p>
+                <h4>Estimated Results</h4>
+                <p><strong>Inbound Velocity:</strong> Not calculated yet</p>
+                <p><strong>Outbound Velocity:</strong> Not calculated yet</p>
+                <p><strong>Coefficient of Restitution (COR):</strong> Not calculated yet</p>
+                <p><strong>Contact Time:</strong> Not calculated yet</p>
+                <p><strong>Deformation:</strong> Not calculated yet</p>
             </div>
         </div>
     </body>
     </html>
-    ''')
+    '''
 
 # Endpoint to handle image uploads and processing
 @app.route('/upload', methods=['POST'])
@@ -337,21 +366,35 @@ def upload_images():
 
     # Check if files were uploaded
     if 'images' not in request.files:
-        return render_template_string('''
+        return '''
         <div class="container">
             <div class="message error">No images uploaded. Please select at least one .bmp file.</div>
             <a href="/">Go Back</a>
         </div>
-        ''', 400)
+        '''
 
     files = request.files.getlist('images')
     if not files or all(file.filename == '' for file in files):
-        return render_template_string('''
+        return '''
         <div class="container">
             <div class="message error">No images selected. Please select at least one .bmp file.</div>
             <a href="/">Go Back</a>
         </div>
-        ''', 400)
+        '''
+
+    # Get mm per pixel and FPS from the form
+    try:
+        mm_per_pixel = float(request.form.get('mm_per_pixel', 0.5))
+        fps = int(request.form.get('fps', 30))
+        if mm_per_pixel <= 0 or fps <= 0:
+            raise ValueError("mm per Pixel and FPS must be positive numbers.")
+    except ValueError as e:
+        return f'''
+        <div class="container">
+            <div class="message error">Invalid input: {str(e)}</div>
+            <a href="/">Go Back</a>
+        </div>
+        '''
 
     # Save uploaded files
     for file in files:
@@ -366,7 +409,7 @@ def upload_images():
         positions_csv = os.path.join(app.config['OUTPUT_FOLDER'], result['output']['positions_csv'])
 
         # Calculate metrics
-        metrics = calculate_metrics(positions_csv)
+        metrics = calculate_metrics(positions_csv, mm_per_pixel, fps)
 
         # Render the page with the results
         return render_template_string('''
@@ -381,28 +424,41 @@ def upload_images():
                     font-family: Arial, sans-serif;
                     margin: 0;
                     padding: 20px;
-                    background-color: #f4f4f4;
-                    color: #333;
+                    background-color: #f0f4f8;
                 }
                 .container {
                     max-width: 800px;
                     margin: 0 auto;
                     background: white;
                     padding: 20px;
-                    border-radius: 5px;
+                    border-radius: 10px;
                     box-shadow: 0 0 10px rgba(0,0,0,0.1);
                 }
                 h1 {
                     text-align: center;
                     color: #2c3e50;
                     font-size: 2.5em;
-                    margin-bottom: 10px;
+                    margin-bottom: 0;
                 }
                 h3 {
                     text-align: center;
                     color: #7f8c8d;
                     font-size: 1.2em;
+                    margin-top: 5px;
                     margin-bottom: 20px;
+                }
+                .upload-section {
+                    background-color: #e6f3f3;
+                    border: 2px dashed #1abc9c;
+                    border-radius: 10px;
+                    padding: 20px;
+                    text-align: center;
+                    margin-bottom: 20px;
+                }
+                .upload-section h4 {
+                    margin: 0 0 15px 0;
+                    color: #2c3e50;
+                    font-size: 1.5em;
                 }
                 .form-group {
                     margin-bottom: 15px;
@@ -410,56 +466,55 @@ def upload_images():
                 label {
                     display: block;
                     margin-bottom: 5px;
-                    font-weight: bold;
                     color: #34495e;
                 }
-                input[type="file"] {
+                input[type="file"], input[type="number"] {
                     width: 100%;
                     padding: 10px;
-                    border: 1px dashed #95a5a6;
-                    border-radius: 4px;
-                    background-color: #ecf0f1;
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    box-sizing: border-box;
+                }
+                input[type="number"] {
+                    width: 100px;
+                    display: inline-block;
+                    margin-left: 10px;
                 }
                 button {
                     display: block;
                     width: 100%;
-                    padding: 10px;
-                    background-color: #28a745;
+                    padding: 12px;
+                    background-color: #1abc9c;
                     color: white;
                     border: none;
-                    border-radius: 4px;
+                    border-radius: 5px;
                     cursor: pointer;
-                    font-size: 16px;
+                    font-size: 1.1em;
                     transition: background-color 0.3s;
                 }
                 button:hover {
-                    background-color: #218838;
+                    background-color: #16a085;
                 }
                 .results {
                     margin-top: 20px;
                     padding: 15px;
-                    background-color: #f9f9f9;
-                    border-radius: 4px;
+                    background-color: #fff;
                     border: 1px solid #ddd;
+                    border-radius: 5px;
                 }
-                .results h3 {
-                    margin-top: 0;
-                    color: #34495e;
-                    font-size: 1.5em;
+                .results h4 {
+                    margin: 0 0 10px 0;
+                    color: #2c3e50;
+                    font-size: 1.3em;
                 }
                 .results p {
                     margin: 5px 0;
-                    font-size: 1em;
-                    color: #2c3e50;
-                }
-                .results p strong {
-                    display: inline-block;
-                    width: 200px;
+                    color: #34495e;
                 }
                 .message {
                     margin-top: 15px;
                     padding: 10px;
-                    border-radius: 4px;
+                    border-radius: 5px;
                     text-align: center;
                 }
                 .success {
@@ -470,24 +525,41 @@ def upload_images():
                     background-color: #f8d7da;
                     color: #721c24;
                 }
+                a {
+                    color: #3498db;
+                    text-decoration: none;
+                }
+                a:hover {
+                    text-decoration: underline;
+                }
             </style>
         </head>
         <body>
             <div class="container">
                 <h1>Football Metrics</h1>
-                <h3>Based Inbound Velocity, Deformation & Contact Time Analysis</h3>
+                <h3>AI-Based Inbound Velocity, Deformation & Contact Time Analysis</h3>
                 <div class="message success">
                     Successfully processed {{ frames_processed }} frames.
                 </div>
-                <form action="/upload" method="post" enctype="multipart/form-data">
-                    <div class="form-group">
-                        <label for="images">Upload Image Sequence:</label>
-                        <input type="file" name="images" id="images" multiple accept=".bmp" required>
-                    </div>
-                    <button type="submit">Run Analysis</button>
-                </form>
+                <div class="upload-section">
+                    <h4>Upload Image Sequence</h4>
+                    <form action="/upload" method="post" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <input type="file" name="images" id="images" multiple accept=".bmp" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="mm_per_pixel">mm per Pixel:</label>
+                            <input type="number" name="mm_per_pixel" id="mm_per_pixel" step="0.1" value="{{ mm_per_pixel }}" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="fps">Frames per Second (FPS):</label>
+                            <input type="number" name="fps" id="fps" step="1" value="{{ fps }}" required>
+                        </div>
+                        <button type="submit">Run Analysis</button>
+                    </form>
+                </div>
                 <div class="results">
-                    <h3>Estimated Results</h3>
+                    <h4>Estimated Results</h4>
                     <p><strong>Inbound Velocity:</strong> {{ metrics.inbound_velocity }} m/s</p>
                     <p><strong>Outbound Velocity:</strong> {{ metrics.outbound_velocity }} m/s</p>
                     <p><strong>Coefficient of Restitution (COR):</strong> {{ metrics.cor }}</p>
@@ -497,52 +569,15 @@ def upload_images():
             </div>
         </body>
         </html>
-        ''', frames_processed=frames_processed, metrics=metrics)
+        ''', frames_processed=frames_processed, metrics=metrics, mm_per_pixel=mm_per_pixel, fps=fps)
     except Exception as e:
         logger.error(f"Error in upload_images: {str(e)}")
-        return render_template_string('''
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Football Metrics</title>
-            <style>
-                body {
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    padding: 20px;
-                    background-color: #f4f4f4;
-                    color: #333;
-                }
-                .container {
-                    max-width: 800px;
-                    margin: 0 auto;
-                    background: white;
-                    padding: 20px;
-                    border-radius: 5px;
-                    box-shadow: 0 0 10px rgba(0,0,0,0.1);
-                }
-                .message {
-                    margin-top: 15px;
-                    padding: 10px;
-                    border-radius: 4px;
-                    text-align: center;
-                }
-                .error {
-                    background-color: #f8d7da;
-                    color: #721c24;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="message error">Failed to process images. Server returned 500: 'error':'{{ error }}'</div>
-                <a href="/">Go Back</a>
-            </div>
-        </body>
-        </html>
-        ''', error=str(e)), 500
+        return f'''
+        <div class="container">
+            <div class="message error">Failed to process images. Server returned 500: 'error':'{str(e)}'</div>
+            <a href="/">Go Back</a>
+        </div>
+        ''', 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
