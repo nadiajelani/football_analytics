@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import os
+import re
 
 def run_analysis(image_folder, mm_per_pixel=0.5, fps=10000):
     """
@@ -28,9 +29,9 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=10000):
     print(f"Found {len(image_files)} supported image files in {image_folder}")
     """
 
-    # Placeholder: Simulate 114 frames starting from 0
-    image_files = [f"frame_{i:04d}.png" for i in range(0, 114)]
-    print(f"Simulated {len(image_files)} image files (frames 0 to {len(image_files) - 1})")
+    # Placeholder: Simulate 114 frames from Img001450 to Img001563 to match the screenshot
+    image_files = [f"Img{i:06d}.png" for i in range(1450, 1564)]
+    print(f"Simulated {len(image_files)} image files (frames {image_files[0]} to {image_files[-1]})")
 
     # Simulate the first image to initialize
     frame = np.zeros((480, 640), dtype=np.uint8)  # Simulated 640x480 grayscale image
@@ -55,6 +56,7 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=10000):
     dot_records = []
     ball_positions = []
     velocities = []
+    contact_frame = None  # Will be determined dynamically
 
     # Simulate realistic ball motion with a larger drop height
     g = 9.8  # m/s^2
@@ -63,29 +65,35 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=10000):
     y0 = 100  # Initial y-position (pixels)
     contact_duration = 100  # Frames in contact (10 ms at 10000 fps)
     cor_simulated = 0.8  # Simulated COR for motion (not used in final calculation)
-    contact_frame = 50  # Frame where the ball hits the surface (relative to 0)
 
     # Process frames
-    start_frame = 0
-    end_frame = len(image_files)
     for i, img_file in enumerate(image_files):
-        frame_idx = i + start_frame
-        if frame_idx < start_frame or frame_idx >= end_frame:
+        # Extract frame number from filename (e.g., Img001450 -> 1450)
+        match = re.search(r'Img(\d{6})\.png', img_file)
+        if not match:
+            print(f"Warning: Could not extract frame number from filename {img_file}, skipping...")
             continue
+        frame_idx = int(match.group(1))
+        print(f"Processing frame {frame_idx} from file {img_file}")
 
         # Simulate ball position with a high frame rate
-        t = i / fps  # Time in seconds
-        if i < contact_frame:
+        t = frame_idx / fps  # Time in seconds
+
+        # Calculate ball position and determine contact_frame dynamically
+        if contact_frame is None:
             # Before contact: free fall
             cy = y0 + v0 * t + 0.5 * g_pixels * t**2
-            if cy + 50 >= surface_y:  # Assume radius= notice50
+            if cy + 50 >= surface_y:  # Assume radius=50, bottom of ball touches surface
                 cy = surface_y - 50
-        elif i < contact_frame + contact_duration:
+                if contact_frame is None:
+                    contact_frame = frame_idx
+                    print(f"Contact frame determined: {contact_frame}")
+        elif frame_idx < contact_frame + contact_duration:
             # During contact
             cy = surface_y - 50
         else:
             # After contact: bounce upward
-            t_bounce = (i - (contact_frame + contact_duration)) / fps
+            t_bounce = (frame_idx - (contact_frame + contact_duration)) / fps
             h = (surface_y - 50 - y0) * (mm_per_pixel / 1000)  # Height in meters
             v_impact = np.sqrt(2 * g * h)  # m/s
             v_impact_pixels = v_impact / (mm_per_pixel / 1000)  # pixels/s
