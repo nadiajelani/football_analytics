@@ -3,14 +3,14 @@ import numpy as np
 import pandas as pd
 import os
 
-def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
+def run_analysis(image_folder, mm_per_pixel=0.5, fps=10000):
     """
     Process a sequence of images to calculate football dynamics metrics and annotate images.
     
     Args:
-        image_folder (str): Path to the directory containing .bmp image files.
+        image_folder (str): Path to the directory containing image files (.bmp, .png, .jpg).
         mm_per_pixel (float): Calibration factor in mm per pixel (default: 0.5).
-        fps (float): Frame rate in frames per second (default: 30).
+        fps (float): Frame rate in frames per second (default: 10000).
     
     Returns:
         dict: A dictionary containing the calculated metrics:
@@ -22,15 +22,15 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
     """
     # Load image files (uncomment for local/Colab environment)
     """
-    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.bmp')])
+    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.bmp', '.png', '.jpg'))])
     if not image_files:
-        raise ValueError(f"No .bmp files found in {image_folder}. Please check the folder path and ensure .bmp files exist.")
+        raise ValueError(f"No supported image files (.bmp, .png, .jpg) found in {image_folder}. Please check the folder path and ensure image files exist.")
     print(f"Found {len(image_files)} supported image files in {image_folder}")
     """
 
-    # Placeholder: Simulate 114 frames to match the screenshot
-    image_files = [f"frame_{i:04d}.bmp" for i in range(1450, 1564)]
-    print(f"Simulated {len(image_files)} image files (frames 1450 to {1450 + len(image_files) - 1})")
+    # Placeholder: Simulate 114 frames starting from 0
+    image_files = [f"frame_{i:04d}.png" for i in range(0, 114)]
+    print(f"Simulated {len(image_files)} image files (frames 0 to {len(image_files) - 1})")
 
     # Simulate the first image to initialize
     frame = np.zeros((480, 640), dtype=np.uint8)  # Simulated 640x480 grayscale image
@@ -44,7 +44,7 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
     kalman = cv2.KalmanFilter(4, 2)
     kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
     kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-    kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.005  # Reduced for minimal movement
+    kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.001  # Reduced for minimal movement
     kalman.statePre = np.array([[frame.shape[1] // 2], [frame.shape[0] // 2], [0], [0]], np.float32)
 
     # Initialize variables
@@ -60,25 +60,25 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
     g = 9.8  # m/s^2
     g_pixels = g / (mm_per_pixel / 1000)  # Convert to pixels/s^2
     v0 = 0  # Initial velocity (pixels/s)
-    y0 = 100  # Initial y-position (pixels, lower to ensure contact within 114 frames)
-    contact_duration = 2  # Frames in contact
+    y0 = 100  # Initial y-position (pixels)
+    contact_duration = 100  # Frames in contact (10 ms at 10000 fps)
     cor_simulated = 0.8  # Simulated COR for motion (not used in final calculation)
-    contact_frame = 50  # Frame where the ball hits the surface
+    contact_frame = 50  # Frame where the ball hits the surface (relative to 0)
 
     # Process frames
-    start_frame = 1450
-    end_frame = 1450 + len(image_files)
+    start_frame = 0
+    end_frame = len(image_files)
     for i, img_file in enumerate(image_files):
         frame_idx = i + start_frame
         if frame_idx < start_frame or frame_idx >= end_frame:
             continue
 
-        # Simulate ball position with a more significant drop
+        # Simulate ball position with a high frame rate
         t = i / fps  # Time in seconds
         if i < contact_frame:
             # Before contact: free fall
             cy = y0 + v0 * t + 0.5 * g_pixels * t**2
-            if cy + 50 >= surface_y:  # Assume radius=50
+            if cy + 50 >= surface_y:  # Assume radius= notice50
                 cy = surface_y - 50
         elif i < contact_frame + contact_duration:
             # During contact
@@ -219,8 +219,8 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
             contact_start = min(contact_frames)
             contact_end = max(contact_frames)
 
-            # Limit contact duration to a realistic range (1-2 frames at 30 fps)
-            max_contact_frames = 2
+            # Limit contact duration to a realistic range (5-20 ms at 10000 fps)
+            max_contact_frames = int(0.020 * fps)  # 20 ms
             if contact_end - contact_start + 1 > max_contact_frames:
                 contact_end = contact_start + max_contact_frames - 1
                 contact_frames = list(range(contact_start, contact_end + 1))
@@ -228,11 +228,11 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
 
             # Inbound Velocity: Use a larger window to capture significant movement
             pre_contact_frames = df[df["Frame"] < contact_start]["Frame"].tolist()
-            if len(pre_contact_frames) >= 10:
+            if len(pre_contact_frames) >= 100:  # 100 frames = 0.01 s at 10000 fps
                 # Try to find frames with clear downward motion over a larger window
-                for i in range(len(pre_contact_frames) - 10, 0, -1):
+                for i in range(len(pre_contact_frames) - 100, 0, -1):
                     frame1 = pre_contact_frames[i]
-                    frame2 = pre_contact_frames[i + 9]  # 10-frame window
+                    frame2 = pre_contact_frames[i + 99]  # 100-frame window
                     y1 = df[df["Frame"] == frame1]["Ball_Y"].iloc[0]
                     y2 = df[df["Frame"] == frame2]["Ball_Y"].iloc[0]
                     t1 = frame1 / fps
@@ -257,11 +257,11 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
             # Outbound Velocity: Use frames after contact_end, ensure upward motion
             post_contact_frames = df[df["Frame"] > contact_end]["Frame"].tolist()
             outbound_velocity = 0.0
-            if len(post_contact_frames) >= 2:
+            if len(post_contact_frames) >= 100:  # 100 frames = 0.01 s at 10000 fps
                 # Try to find frames with clear upward motion
-                for i in range(len(post_contact_frames) - 1):
+                for i in range(len(post_contact_frames) - 99):
                     frame1 = post_contact_frames[i]
-                    frame2 = post_contact_frames[i + 1]
+                    frame2 = post_contact_frames[i + 99]
                     y1 = df[df["Frame"] == frame1]["Ball_Y"].iloc[0]
                     y2 = df[df["Frame"] == frame2]["Ball_Y"].iloc[0]
                     t1 = frame1 / fps
@@ -317,8 +317,8 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
     }
 
 def main():
-    print(">>> run_analysis('dummy_folder', mm_per_pixel=0.5, fps=30)")
-    result = run_analysis('dummy_folder', mm_per_pixel=0.5, fps=30)
+    print(">>> run_analysis('dummy_folder', mm_per_pixel=0.5, fps=10000)")
+    result = run_analysis('dummy_folder', mm_per_pixel=0.5, fps=10000)
     print(result)
 
 if __name__ == "__main__":
