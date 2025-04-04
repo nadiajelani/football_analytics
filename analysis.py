@@ -56,15 +56,13 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
     ball_positions = []
     velocities = []
 
-    # Simulate realistic ball motion (since we're in a simulated environment)
-    # Assume the ball starts at y=200, falls to surface_y=446, and bounces back
-    # Use simple physics: y = y0 + v0*t + 0.5*a*t^2 (a = 9.8 m/s^2, convert to pixels)
+    # Simulate realistic ball motion
     g = 9.8  # m/s^2
     g_pixels = g / (mm_per_pixel / 1000)  # Convert to pixels/s^2
     v0 = 0  # Initial velocity (pixels/s)
     y0 = 200  # Initial y-position (pixels)
     contact_duration = 2  # Frames in contact
-    cor_simulated = 0.8  # Simulated COR for the bounce
+    cor_simulated = 0.8  # Simulated COR for motion (not used in final calculation)
     contact_frame = 15  # Frame where the ball hits the surface
 
     # Process frames
@@ -81,14 +79,13 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
             # Before contact: free fall
             cy = y0 + v0 * t + 0.5 * g_pixels * t**2
             if cy + 50 >= surface_y:  # Assume radius=50
-                cy = surface_y - 50  # Ball center when bottom touches surface
+                cy = surface_y - 50
         elif i < contact_frame + contact_duration:
             # During contact
             cy = surface_y - 50
         else:
             # After contact: bounce upward
             t_bounce = (i - (contact_frame + contact_duration)) / fps
-            # Velocity at impact: v = sqrt(2 * g * h)
             h = (surface_y - 50 - y0) * (mm_per_pixel / 1000)  # Height in meters
             v_impact = np.sqrt(2 * g * h)  # m/s
             v_impact_pixels = v_impact / (mm_per_pixel / 1000)  # pixels/s
@@ -190,6 +187,11 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
                                                 "Contact_Dot1_X", "Contact_Dot1_Y", 
                                                 "Contact_Dot2_X", "Contact_Dot2_Y"])
 
+    # Print Ball_Y for all frames to debug
+    print("\nBall Y-Positions for All Frames:")
+    for frame, y in zip(df["Frame"], df["Ball_Y"]):
+        print(f"Frame {frame}: Ball_Y = {y} pixels")
+
     # Calculate Metrics with Fallbacks
     ball_positions_mm = [(frame, y * mm_per_pixel) for frame, y in ball_positions]
     ball_positions_with_time = [(frame / fps, y) for frame, y in ball_positions_mm]
@@ -234,7 +236,7 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
                 inbound_velocity = (y2_mm - y1_mm) / (t2 - t1)  # mm/s
                 print(f"Inbound velocity calculation: y1={y1_mm} mm, y2={y2_mm} mm, t1={t1} s, t2={t2} s")
                 if inbound_velocity <= 0:
-                    print("Warning: Inbound velocity is negative or zero, adjusting...")
+                    print("Warning: Inbound velocity is negative or zero, setting to default...")
                     inbound_velocity = 1000  # Default to 1 m/s in mm/s
                 else:
                     inbound_velocity = abs(inbound_velocity)
@@ -245,28 +247,29 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=30):
             else:
                 print("Warning: Not enough frames before contact to calculate inbound velocity.")
 
-            # Outbound Velocity: Use frames just after contact_end
+            # Outbound Velocity: Use frames after contact_end, ensure upward motion
             post_contact_frames = df[df["Frame"] > contact_end]["Frame"].tolist()
+            outbound_velocity = 0.0
             if len(post_contact_frames) >= 2:
-                frame1 = post_contact_frames[0]
-                frame2 = post_contact_frames[1]
-                y1 = df[df["Frame"] == frame1]["Ball_Y"].iloc[0]
-                y2 = df[df["Frame"] == frame2]["Ball_Y"].iloc[0]
-                t1 = frame1 / fps
-                t2 = frame2 / fps
-                y1_mm = y1 * mm_per_pixel
-                y2_mm = y2 * mm_per_pixel
-                outbound_velocity = (y2_mm - y1_mm) / (t2 - t1)  # mm/s
-                print(f"Outbound velocity calculation: y1={y1_mm} mm, y2={y2_mm} mm, t1={t1} s, t2={t2} s")
-                if outbound_velocity >= 0:
-                    print("Warning: Outbound velocity is positive (should be negative for upward motion), adjusting...")
-                    # Estimate based on inbound velocity and COR
-                    outbound_velocity = inbound_velocity * 1000 * 0.8  # Assume COR=0.8
+                # Try to find frames where the ball is moving upward
+                for i in range(len(post_contact_frames) - 1):
+                    frame1 = post_contact_frames[i]
+                    frame2 = post_contact_frames[i + 1]
+                    y1 = df[df["Frame"] == frame1]["Ball_Y"].iloc[0]
+                    y2 = df[df["Frame"] == frame2]["Ball_Y"].iloc[0]
+                    t1 = frame1 / fps
+                    t2 = frame2 / fps
+                    y1_mm = y1 * mm_per_pixel
+                    y2_mm = y2 * mm_per_pixel
+                    velocity = (y2_mm - y1_mm) / (t2 - t1)  # mm/s
+                    print(f"Outbound velocity attempt {i+1}: Frame {frame1} to {frame2}, y1={y1_mm} mm, y2={y2_mm} mm, velocity={velocity} mm/s")
+                    if velocity < 0:  # Upward motion (y decreases)
+                        outbound_velocity = abs(velocity)
+                        break
+                if outbound_velocity == 0.0:
+                    print("Warning: Could not find frames with upward motion after contact.")
                 else:
-                    outbound_velocity = abs(outbound_velocity)
-                    if outbound_velocity < 500:  # Less than 0.5 m/s
-                        outbound_velocity = inbound_velocity * 1000 * 0.8  # Assume COR=0.8
-                print(f"Outbound velocity: {outbound_velocity} mm/s (Frame {frame1}: y={y1_mm} mm, Frame {frame2}: y={y2_mm} mm)")
+                    print(f"Outbound velocity: {outbound_velocity} mm/s (Frame {frame1}: y={y1_mm} mm, Frame {frame2}: y={y2_mm} mm)")
                 outbound_velocity = outbound_velocity / 1000  # Convert to m/s
             else:
                 print("Warning: Not enough frames after contact to calculate outbound velocity.")
