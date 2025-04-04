@@ -23,14 +23,16 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=10000):
     """
     # Load image files (uncomment for local/Colab environment)
     """
-    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.bmp', '.png', '.jpg'))])
+    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.bmp', '.png', .jpg'))])
     if not image_files:
         raise ValueError(f"No supported image files (.bmp, .png, .jpg) found in {image_folder}. Please check the folder path and ensure image files exist.")
     print(f"Found {len(image_files)} supported image files in {image_folder}")
     """
 
-    # Placeholder: Simulate 114 frames from Img001450 to Img001563 to match the screenshot
-    image_files = [f"Img{i:06d}.png" for i in range(1450, 1564)]
+    # Placeholder: Simulate 114 frames starting from Img000000
+    # To simulate a different range (e.g., Img001450 to Img001563), change the range accordingly:
+    # image_files = [f"Img{i:06d}.png" for i in range(1450, 1564)]
+    image_files = [f"Img{i:06d}.png" for i in range(0, 114)]
     print(f"Simulated {len(image_files)} image files (frames {image_files[0]} to {image_files[-1]})")
 
     # Simulate the first image to initialize
@@ -68,7 +70,7 @@ def run_analysis(image_folder, mm_per_pixel=0.5, fps=10000):
 
     # Process frames
     for i, img_file in enumerate(image_files):
-        # Extract frame number from filename (e.g., Img001450 -> 1450)
+        # Extract frame number from filename (e.g., Img000000 -> 0)
         match = re.search(r'Img(\d{6})\.png', img_file)
         if not match:
             print(f"Warning: Could not extract frame number from filename {img_file}, skipping...")
