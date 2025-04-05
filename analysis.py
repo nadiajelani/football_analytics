@@ -6,328 +6,208 @@ import re
 
 def run_analysis(image_folder, mm_per_pixel=0.5, fps=10000):
     """
-    Process a sequence of images to calculate football dynamics metrics and annotate images.
+    Process a sequence of images to calculate football dynamics metrics using Hough Circle detection.
     
     Args:
-        image_folder (str): Path to the directory containing image files (.bmp, .png, .jpg).
+        image_folder (str): Path to directory containing image files.
         mm_per_pixel (float): Calibration factor in mm per pixel (default: 0.5).
         fps (float): Frame rate in frames per second (default: 10000).
     
     Returns:
-        dict: A dictionary containing the calculated metrics:
-              - inbound_velocity (m/s)
-              - outbound_velocity (m/s)
-              - cor (coefficient of restitution)
-              - contact_time (s)
-              - deformation (mm)
+        dict: Calculated metrics (inbound_velocity, outbound_velocity, cor, contact_time, deformation)
     """
-    # Load image files (uncomment for local/Colab environment)
-    """
-    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(('.bmp', '.png', .jpg'))])
-    if not image_files:
-        raise ValueError(f"No supported image files (.bmp, .png, .jpg) found in {image_folder}. Please check the folder path and ensure image files exist.")
-    print(f"Found {len(image_files)} supported image files in {image_folder}")
-    """
-
-    # Placeholder: Simulate 114 frames starting from Img000000
-    # To simulate a different range (e.g., Img001450 to Img001563), change the range accordingly:
-    # image_files = [f"Img{i:06d}.png" for i in range(1450, 1564)]
-    image_files = [f"Img{i:06d}.png" for i in range(0, 114)]
+    # Simulate image files from Img000700 to Img002500
+    image_files = [f"Img{i:06d}.png" for i in range(700, 2501)]
     print(f"Simulated {len(image_files)} image files (frames {image_files[0]} to {image_files[-1]})")
 
-    # Simulate the first image to initialize
-    frame = np.zeros((480, 640), dtype=np.uint8)  # Simulated 640x480 grayscale image
+    # Initialize blank frame
+    frame = np.zeros((480, 640), dtype=np.uint8)
     print(f"Image dimensions: {frame.shape}")
 
-    # Set surface_y to the known position of the green line
+    # Green line position
     surface_y = 446
-    print(f"Surface set at y = {surface_y}")
+    print(f"Green surface line set at y = {surface_y}")
 
-    # Kalman Filter Setup for Stable Circle Detection
+    # Kalman Filter Setup
     kalman = cv2.KalmanFilter(4, 2)
     kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
     kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-    kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.001  # Reduced for minimal movement
+    kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.001
     kalman.statePre = np.array([[frame.shape[1] // 2], [frame.shape[0] // 2], [0], [0]], np.float32)
 
     # Initialize variables
     D_original = None
-    last_valid_radius = None
-    last_valid_contact_points = None
     data_records = []
     dot_records = []
     ball_positions = []
     velocities = []
-    contact_frame = None  # Will be determined dynamically
 
-    # Simulate realistic ball motion with a larger drop height
+    # Simulate ball motion
     g = 9.8  # m/s^2
-    g_pixels = g / (mm_per_pixel / 1000)  # Convert to pixels/s^2
-    v0 = 0  # Initial velocity (pixels/s)
-    y0 = 100  # Initial y-position (pixels)
-    contact_duration = 100  # Frames in contact (10 ms at 10000 fps)
-    cor_simulated = 0.8  # Simulated COR for motion (not used in final calculation)
+    g_pixels = g / (mm_per_pixel / 1000)
+    v0 = 0
+    y0 = 100
+    contact_duration = 100
+    cor_simulated = 0.8
+    contact_frame = None
 
-    # Process frames
     for i, img_file in enumerate(image_files):
-        # Extract frame number from filename (e.g., Img000000 -> 0)
-        match = re.search(r'Img(\d{6})\.png', img_file)
-        if not match:
-            print(f"Warning: Could not extract frame number from filename {img_file}, skipping...")
-            continue
-        frame_idx = int(match.group(1))
-        print(f"Processing frame {frame_idx} from file {img_file}")
+        frame_idx = int(re.search(r'Img(\d{06})\.png', img_file).group(1))
+        print(f"Processing frame {frame_idx}")
 
-        # Simulate ball position with a high frame rate
-        t = frame_idx / fps  # Time in seconds
+        # Simulate frame with green line
+        frame_sim = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.line(frame_sim, (0, surface_y), (639, surface_y), (0, 255, 0), 2)  # Green line
 
-        # Calculate ball position and determine contact_frame dynamically
+        # Simulate ball position
+        t = (frame_idx - 700) / fps  # Adjust time based on starting frame
         if contact_frame is None:
-            # Before contact: free fall
             cy = y0 + v0 * t + 0.5 * g_pixels * t**2
-            if cy + 50 >= surface_y:  # Assume radius=50, bottom of ball touches surface
+            if cy + 50 >= surface_y:
                 cy = surface_y - 50
                 if contact_frame is None:
                     contact_frame = frame_idx
                     print(f"Contact frame determined: {contact_frame}")
         elif frame_idx < contact_frame + contact_duration:
-            # During contact
             cy = surface_y - 50
         else:
-            # After contact: bounce upward
             t_bounce = (frame_idx - (contact_frame + contact_duration)) / fps
-            h = (surface_y - 50 - y0) * (mm_per_pixel / 1000)  # Height in meters
-            v_impact = np.sqrt(2 * g * h)  # m/s
-            v_impact_pixels = v_impact / (mm_per_pixel / 1000)  # pixels/s
-            v_bounce = v_impact_pixels * cor_simulated  # Upward velocity after bounce
+            h = (surface_y - 50 - y0) * (mm_per_pixel / 1000)
+            v_impact = np.sqrt(2 * g * h)
+            v_impact_pixels = v_impact / (mm_per_pixel / 1000)
+            v_bounce = v_impact_pixels * cor_simulated
             cy = (surface_y - 50) - v_bounce * t_bounce + 0.5 * g_pixels * t_bounce**2
 
-        # Ensure cy stays within bounds
         cy = max(50, min(cy, surface_y - 50))
-        cx = 320  # Center x
-        radius = 50  # Fixed radius for simulation
-        print(f"Frame {frame_idx}: Simulated ball position at ({cx}, {cy}) with radius {radius}")
+        cx = 320
+        radius = 50
+
+        # Draw black circle (simulated ball)
+        cv2.circle(frame_sim, (int(cx), int(cy)), int(radius), (0, 0, 0), -1)
+
+        # Hough Circle Detection
+        gray = cv2.cvtColor(frame_sim, cv2.COLOR_BGR2GRAY)
+        circles = cv2.HoughCircles(
+            gray, cv2.HOUGH_GRADIENT, dp=1, minDist=100,
+            param1=50, param2=30, minRadius=40, maxRadius=60
+        )
+
+        if circles is not None:
+            circles = np.uint16(np.around(circles))
+            cx, cy, radius = circles[0, 0]
+            print(f"Frame {frame_idx}: Hough detected circle at ({cx}, {cy}), radius {radius}")
+
+            # Kalman Filter Update
+            measurement = np.array([[np.float32(cx)], [np.float32(cy)]])
+            kalman.correct(measurement)
+            prediction = kalman.predict()
+            cx_pred, cy_pred = int(prediction[0]), int(prediction[1])
+
+            # Draw cyan dot at predicted center
+            cv2.circle(frame_sim, (cx_pred, cy_pred), 5, (255, 255, 0), -1)  # Cyan dot
 
         # Track ball position
         ball_positions.append((frame_idx, cy))
-
-        # Calculate velocity for contact detection (in pixels per frame)
         if len(ball_positions) >= 2:
             prev_frame, prev_cy = ball_positions[-2]
             curr_frame, curr_cy = ball_positions[-1]
-            velocity = (curr_cy - prev_cy) / (curr_frame - prev_frame)  # pixels per frame
+            velocity = (curr_cy - prev_cy) / (curr_frame - prev_frame)
             velocities.append(velocity)
         else:
             velocities.append(0)
 
-        print(f"Frame {frame_idx}: Ball_Y = {cy} pixels, Velocity = {velocities[-1]} pixels/frame")
-
-        top_dot_x, top_dot_y = None, None
-        bottom_dot_x, bottom_dot_y = None, None
-        contact_dot1_x, contact_dot1_y = None, None
-        contact_dot2_x, contact_dot2_y = None, None
-        diameter = 0
-        contact_length = 0
-
-        top_point = (cx, cy - int(radius))
-        bottom_point = (cx, cy + int(radius))
-
-        # Contact detection with stricter velocity check
-        is_contact = False
-        contact_margin = 1
-        if abs(bottom_point[1] - surface_y) <= contact_margin:
-            if len(velocities) > 0:
-                current_velocity = velocities[-1]
-                if current_velocity > 0:  # Moving downward
-                    is_contact = True
-                elif current_velocity < 0:  # Moving upward
-                    # Only continue contact if it started recently
-                    if data_records and data_records[-1][-1] > 0 and (frame_idx - contact_start <= contact_duration):
-                        is_contact = True
-                print(f"Frame {frame_idx}: Contact check - bottom_y={bottom_point[1]}, velocity={current_velocity}, is_contact={is_contact}")
-        else:
-            print(f"Frame {frame_idx}: No contact (bottom_y={bottom_point[1]}, surface_y={surface_y})")
-
-        if is_contact and 'contact_start' not in locals():
-            contact_start = frame_idx
-
-        if is_contact:
-            bottom_point = (cx, surface_y)
-
-        top_dot_x, top_dot_y = top_point
-        bottom_dot_x, bottom_dot_y = bottom_point
-
+        top_point = (cx, cy - radius)
+        bottom_point = (cx, cy + radius)
         diameter = bottom_point[1] - top_point[1]
-        diameter = max(diameter, 20)
-        print(f"Frame {frame_idx}: Diameter = {diameter} pixels")
-
         if D_original is None and bottom_point[1] < surface_y - 50:
             D_original = diameter
-            print(f"Frame {frame_idx}: D_original set to {D_original} pixels")
 
-        contact_point1 = None
-        contact_point2 = None
-        if is_contact:
+        # Contact detection and yellow dots
+        contact_length = 0
+        contact_point1 = contact_point2 = None
+        if abs(bottom_point[1] - surface_y) <= 1 and velocities[-1] >= 0:
+            bottom_point = (cx, surface_y)
             delta_y = surface_y - cy
             discriminant = radius**2 - delta_y**2
             if discriminant >= 0:
                 sqrt_disc = np.sqrt(discriminant)
-                x1 = int(cx - sqrt_disc)
-                x2 = int(cx + sqrt_disc)
-                contact_point1 = (x1, surface_y)
-                contact_point2 = (x2, surface_y)
-                contact_length = x2 - x1
-                print(f"Frame {frame_idx}: Contact detected! Contact Length: {contact_length} pixels")
-
-                if last_valid_contact_points is not None:
-                    x1_prev, x2_prev = last_valid_contact_points
-                    if abs(x1 - x1_prev) > 10 or abs(x2 - x2_prev) > 10:
-                        x1, x2 = x1_prev, x2_prev
-                
-                last_valid_contact_points = (x1, x2)
-
-                contact_dot1_x, contact_dot1_y = contact_point1
-                contact_dot2_x, contact_dot2_y = contact_point2
+                contact_point1 = (int(cx - sqrt_disc), surface_y)
+                contact_point2 = (int(cx + sqrt_disc), surface_y)
+                contact_length = contact_point2[0] - contact_point1[0]
+                # Draw yellow dots
+                cv2.circle(frame_sim, contact_point1, 5, (0, 255, 255), -1)
+                cv2.circle(frame_sim, contact_point2, 5, (0, 255, 255), -1)
 
         data_records.append([frame_idx, cx, cy, diameter, contact_length])
-        dot_records.append([frame_idx, top_dot_x, top_dot_y, bottom_dot_x, bottom_dot_y, 
-                           contact_dot1_x, contact_dot1_y, contact_dot2_x, contact_dot2_y])
+        dot_records.append([frame_idx, top_point[0], top_point[1], bottom_point[0], bottom_point[1],
+                          contact_point1[0] if contact_point1 else None, contact_point1[1] if contact_point1 else None,
+                          contact_point2[0] if contact_point2 else None, contact_point2[1] if contact_point2 else None])
 
-    # Create DataFrames (in-memory)
     df = pd.DataFrame(data_records, columns=["Frame", "Ball_X", "Ball_Y", "Diameter", "Contact_Length"])
-    dot_df = pd.DataFrame(dot_records, columns=["Frame", 
-                                                "Top_Dot_X", "Top_Dot_Y", 
-                                                "Bottom_Dot_X", "Bottom_Dot_Y", 
-                                                "Contact_Dot1_X", "Contact_Dot1_Y", 
-                                                "Contact_Dot2_X", "Contact_Dot2_Y"])
+    dot_df = pd.DataFrame(dot_records, columns=["Frame", "Top_Dot_X", "Top_Dot_Y", "Bottom_Dot_X", "Bottom_Dot_Y",
+                                               "Contact_Dot1_X", "Contact_Dot1_Y", "Contact_Dot2_X", "Contact_Dot2_Y"])
 
-    # Print Ball_Y for all frames to debug
-    print("\nBall Y-Positions for All Frames:")
-    for frame, y in zip(df["Frame"], df["Ball_Y"]):
-        print(f"Frame {frame}: Ball_Y = {y} pixels")
-
-    # Calculate Metrics with Fallbacks
-    ball_positions_mm = [(frame, y * mm_per_pixel) for frame, y in ball_positions]
-    ball_positions_with_time = [(frame / fps, y) for frame, y in ball_positions_mm]
-
-    # Default values in case of failure
-    inbound_velocity = 0.0
-    outbound_velocity = 0.0
-    cor = 0.0
-    contact_time = 0.0
-    deformation = 0.0
-
+    # Calculate Metrics
+    inbound_velocity = outbound_velocity = cor = contact_time = deformation = 0.0
     try:
-        # Determine contact start and end using yellow dots
-        contact_frames = dot_df[
-            (dot_df["Contact_Dot1_Y"].notna()) & (dot_df["Contact_Dot2_Y"].notna())
-        ]["Frame"].tolist()
-
-        if not contact_frames:
-            print("Warning: No contact frames detected (no yellow dots found). Using default values.")
-        else:
+        contact_frames = dot_df[(dot_df["Contact_Dot1_Y"].notna()) & (dot_df["Contact_Dot2_Y"].notna())]["Frame"].tolist()
+        if contact_frames:
             contact_start = min(contact_frames)
             contact_end = max(contact_frames)
-
-            # Limit contact duration to a realistic range (5-20 ms at 10000 fps)
-            max_contact_frames = int(0.020 * fps)  # 20 ms
+            max_contact_frames = int(0.020 * fps)
             if contact_end - contact_start + 1 > max_contact_frames:
                 contact_end = contact_start + max_contact_frames - 1
-                contact_frames = list(range(contact_start, contact_end + 1))
-            print(f"Contact frames (after limiting): {contact_frames}, Start: {contact_start}, End: {contact_end}")
 
-            # Inbound Velocity: Use a larger window to capture significant movement
+            # Inbound Velocity
             pre_contact_frames = df[df["Frame"] < contact_start]["Frame"].tolist()
-            if len(pre_contact_frames) >= 100:  # 100 frames = 0.01 s at 10000 fps
-                # Try to find frames with clear downward motion over a larger window
+            if len(pre_contact_frames) >= 100:
                 for i in range(len(pre_contact_frames) - 100, 0, -1):
                     frame1 = pre_contact_frames[i]
-                    frame2 = pre_contact_frames[i + 99]  # 100-frame window
+                    frame2 = pre_contact_frames[i + 99]
                     y1 = df[df["Frame"] == frame1]["Ball_Y"].iloc[0]
                     y2 = df[df["Frame"] == frame2]["Ball_Y"].iloc[0]
-                    t1 = frame1 / fps
-                    t2 = frame2 / fps
+                    t1 = (frame1 - 700) / fps
+                    t2 = (frame2 - 700) / fps
                     y1_mm = y1 * mm_per_pixel
                     y2_mm = y2 * mm_per_pixel
-                    inbound_velocity = (y2_mm - y1_mm) / (t2 - t1)  # mm/s
-                    print(f"Inbound velocity attempt: Frame {frame1} to {frame2}, y1={y1_mm} mm, y2={y2_mm} mm, velocity={inbound_velocity} mm/s")
-                    if inbound_velocity > 0:  # Downward motion
+                    velocity = (y2_mm - y1_mm) / (t2 - t1)
+                    if velocity > 0:
+                        inbound_velocity = velocity / 1000  # m/s
                         break
-                if inbound_velocity <= 0:
-                    print("Warning: Inbound velocity is negative or zero, setting to default...")
-                    inbound_velocity = 2000  # Default to 2 m/s in mm/s
-                else:
-                    if inbound_velocity < 1000:  # Less than 1 m/s
-                        inbound_velocity = 2000
-                print(f"Inbound velocity: {inbound_velocity} mm/s (Frame {frame1}: y={y1_mm} mm, Frame {frame2}: y={y2_mm} mm)")
-                inbound_velocity = inbound_velocity / 1000  # Convert to m/s
-            else:
-                print("Warning: Not enough frames before contact to calculate inbound velocity.")
+                if inbound_velocity == 0:
+                    inbound_velocity = 2.0  # Default 2 m/s
 
-            # Outbound Velocity: Use frames after contact_end, ensure upward motion
+            # Outbound Velocity
             post_contact_frames = df[df["Frame"] > contact_end]["Frame"].tolist()
-            outbound_velocity = 0.0
-            if len(post_contact_frames) >= 100:  # 100 frames = 0.01 s at 10000 fps
-                # Try to find frames with clear upward motion
+            if len(post_contact_frames) >= 100:
                 for i in range(len(post_contact_frames) - 99):
                     frame1 = post_contact_frames[i]
                     frame2 = post_contact_frames[i + 99]
                     y1 = df[df["Frame"] == frame1]["Ball_Y"].iloc[0]
                     y2 = df[df["Frame"] == frame2]["Ball_Y"].iloc[0]
-                    t1 = frame1 / fps
-                    t2 = frame2 / fps
-                    y1_mm = y1 * mm_per_pixel
-                    y2_mm = y2 * mm_per_pixel
-                    velocity = (y2_mm - y1_mm) / (t2 - t1)  # mm/s
-                    print(f"Outbound velocity attempt {i+1}: Frame {frame1} to {frame2}, y1={y1_mm} mm, y2={y2_mm} mm, velocity={velocity} mm/s")
-                    if velocity < 0:  # Upward motion (y decreases)
-                        outbound_velocity = abs(velocity)
+                    t1 = (frame1 - 700) / fps
+                    t2 = (frame2 - 700) / fps
+                    velocity = ((y2 - y1) * mm_per_pixel) / (t2 - t1)
+                    if velocity < 0:
+                        outbound_velocity = abs(velocity) / 1000  # m/s
                         break
-                if outbound_velocity == 0.0:
-                    print("Warning: Could not find frames with upward motion after contact, using average velocity...")
-                    # Fallback: Calculate average velocity over all post-contact frames
-                    if len(post_contact_frames) >= 3:
-                        y_start = df[df["Frame"] == post_contact_frames[0]]["Ball_Y"].iloc[0]
-                        y_end = df[df["Frame"] == post_contact_frames[-1]]["Ball_Y"].iloc[0]
-                        t_start = post_contact_frames[0] / fps
-                        t_end = post_contact_frames[-1] / fps
-                        velocity = ((y_end * mm_per_pixel) - (y_start * mm_per_pixel)) / (t_end - t_start)
-                        if velocity < 0:
-                            outbound_velocity = abs(velocity)
-                if outbound_velocity == 0.0:
-                    print("Warning: Outbound velocity still zero after fallback.")
-                else:
-                    print(f"Outbound velocity: {outbound_velocity} mm/s (Frame {frame1}: y={y1_mm} mm, Frame {frame2}: y={y2_mm} mm)")
-                outbound_velocity = outbound_velocity / 1000  # Convert to m/s
-            else:
-                print("Warning: Not enough frames after contact to calculate outbound velocity.")
 
-            # Coefficient of Restitution (COR)
             cor = outbound_velocity / inbound_velocity if inbound_velocity != 0 else 0
-            print(f"COR: {cor}")
-
-            # Contact Time
-            contact_time = (contact_end - contact_start + 1) / fps  # in seconds
-            print(f"Contact time: {contact_time * 1000} ms")
-
-            # Deformation
-            max_diameter = df["Diameter"].max()
-            deformation = (max_diameter - D_original) * mm_per_pixel if D_original else 0  # in mm
-            print(f"Deformation: {deformation} mm (max_diameter={max_diameter}, D_original={D_original})")
+            contact_time = (contact_end - contact_start + 1) / fps
+            deformation = (df["Diameter"].max() - D_original) * mm_per_pixel if D_original else 0
 
     except Exception as e:
         print(f"Error calculating metrics: {str(e)}")
 
     return {
-        "inbound_velocity": inbound_velocity,  # m/s
-        "outbound_velocity": outbound_velocity,  # m/s
+        "inbound_velocity": inbound_velocity,
+        "outbound_velocity": outbound_velocity,
         "cor": cor,
-        "contact_time": contact_time,  # s
-        "deformation": deformation  # mm
+        "contact_time": contact_time,
+        "deformation": deformation
     }
 
 def main():
-    print(">>> run_analysis('dummy_folder', mm_per_pixel=0.5, fps=10000)")
     result = run_analysis('dummy_folder', mm_per_pixel=0.5, fps=10000)
     print(result)
 
